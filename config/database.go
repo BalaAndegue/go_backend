@@ -40,7 +40,18 @@ func ConnectDatabase() {
 		log.Fatal("Échec de la connexion à la base de données :", err)
 	}
 
-	err = database.AutoMigrate(&models.User{}, &models.Category{}, &models.Product{})
+	err = database.AutoMigrate(
+		&models.User{},
+		&models.Category{},
+		&models.Product{},
+		&models.ProductVariant{},
+		&models.Cart{},
+		&models.CartItem{},
+		&models.Order{},
+		&models.OrderItem{},
+		&models.Payment{},
+		&models.DeliveryGeolocation{},
+	)
 	if err != nil {
 		log.Fatal("Échec de la migration :", err)
 	}
