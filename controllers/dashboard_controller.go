@@ -3,6 +3,7 @@ package controllers
 import (
 	"math"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
@@ -249,4 +250,74 @@ func StorePayment(c *gin.Context) {
 
 	notifyOrderStatus(order.ID, models.StatusPaid)
 	c.JSON(http.StatusCreated, gin.H{"message": "Payment registered", "data": payment})
+}
+
+type PaymentWebhookInput struct {
+	OrderID       uint    `json:"order_id" binding:"required"`
+	Status        string  `json:"status" binding:"required"` // "succeeded" | "failed"
+	Amount        float64 `json:"amount"`
+	TransactionID string  `json:"transaction_id"`
+}
+
+// PaymentWebhook receives asynchronous payment confirmations from a provider.
+// It is authenticated with a shared secret header and is idempotent. When
+// WEBHOOK_SECRET is unset the endpoint is disabled (secure by default).
+func PaymentWebhook(c *gin.Context) {
+	secret := os.Getenv("WEBHOOK_SECRET")
+	if secret == "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Webhook not configured"})
+		return
+	}
+	if c.GetHeader("X-Webhook-Secret") != secret {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid signature"})
+		return
+	}
+
+	var input PaymentWebhookInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		return
+	}
+
+	var order models.Order
+	if err := config.DB.First(&order, input.OrderID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Order not found"})
+		return
+	}
+
+	if input.Status == "failed" {
+		config.DB.Model(&order).Update("status", models.StatusFailed)
+		notifyOrderStatus(order.ID, models.StatusFailed)
+		c.JSON(http.StatusOK, gin.H{"message": "Payment failure recorded"})
+		return
+	}
+
+	// Treat anything else as a success event. Idempotent: ignore if already paid.
+	if order.Status == models.StatusPaid {
+		c.JSON(http.StatusOK, gin.H{"message": "Already paid"})
+		return
+	}
+	if input.Amount > 0 && !amountsEqual(input.Amount, order.Total) {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "Amount mismatch"})
+		return
+	}
+
+	payment := models.Payment{OrderID: order.ID, Amount: order.Total, Method: "webhook", Status: "PAID"}
+	if input.TransactionID != "" {
+		payment.TransactionID = &input.TransactionID
+	}
+	err := config.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&payment).Error; err != nil {
+			return err
+		}
+		return tx.Model(&models.Order{}).Where("id = ?", order.ID).
+			Update("status", models.StatusPaid).Error
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not record payment"})
+		return
+	}
+
+	notifyOrderStatus(order.ID, models.StatusPaid)
+	c.JSON(http.StatusOK, gin.H{"message": "Payment confirmed"})
 }

@@ -12,6 +12,10 @@ func SetupRoutes(r *gin.Engine) {
 		// =====================
 		//  PUBLIC ROUTES
 		// =====================
+		api.GET("/health", controllers.Health)
+		api.GET("/docs", controllers.APIDocs)
+		api.POST("/payments/webhook", controllers.PaymentWebhook)
+
 		api.POST("/register", controllers.Register)
 		api.POST("/registerAdmin", controllers.RegisterAdmin)
 		api.POST("/login", controllers.Login)
