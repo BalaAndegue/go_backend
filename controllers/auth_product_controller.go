@@ -3,9 +3,7 @@ package controllers
 import (
 	"fmt"
 	"net/http"
-	"path/filepath"
 	"strconv"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"shopcart-api/config"
@@ -55,6 +53,23 @@ func RegisterAdmin(c *gin.Context) {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
 		return
 	}
+
+	// This public endpoint exists only to bootstrap the very first admin on a
+	// fresh deployment. Once any admin exists, further admin accounts must be
+	// created via the authenticated user-management endpoints, so we refuse to
+	// avoid privilege escalation by anonymous callers.
+	var adminCount int64
+	if err := config.DB.Model(&models.User{}).
+		Where("role IN ?", []string{models.RoleAdmin, models.RoleSuperAdmin}).
+		Count(&adminCount).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not verify admin state"})
+		return
+	}
+	if adminCount > 0 {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Admin registration is disabled"})
+		return
+	}
+
 	createUser(c, input, models.RoleAdmin)
 }
 
@@ -292,13 +307,6 @@ type ProductInput struct {
 // @Failure 422 {object} map[string]interface{}
 // @Router /products [post]
 func CreateProduct(c *gin.Context) {
-	role, _ := c.Get("role")
-	roleStr := role.(string)
-	if roleStr != models.RoleAdmin && roleStr != models.RoleVendor {
-		c.JSON(http.StatusForbidden, gin.H{"message": "Access denied"})
-		return
-	}
-
 	var input ProductInput
 	if err := c.ShouldBind(&input); err != nil {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
@@ -322,13 +330,11 @@ func CreateProduct(c *gin.Context) {
 		product.SKU = &input.SKU
 	}
 
-	if file, err := c.FormFile("image"); err == nil {
-		filename := fmt.Sprintf("%d_%s", time.Now().Unix(), filepath.Base(file.Filename))
-		uploadPath := filepath.Join("uploads", filename)
-		if err := c.SaveUploadedFile(file, uploadPath); err == nil {
-			imageURL := "http://" + c.Request.Host + "/uploads/" + filename
-			product.Image = &imageURL
-		}
+	if imageURL, err := saveUploadedImage(c, "image", ""); err == nil {
+		product.Image = &imageURL
+	} else if err != errNoFile {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		return
 	}
 
 	if err := config.DB.Create(&product).Error; err != nil {
@@ -347,13 +353,6 @@ func CreateProduct(c *gin.Context) {
 // @Success 200 {object} map[string]interface{}
 // @Router /products/{id} [put]
 func UpdateProduct(c *gin.Context) {
-	role, _ := c.Get("role")
-	roleStr := role.(string)
-	if roleStr != models.RoleAdmin && roleStr != models.RoleVendor {
-		c.JSON(http.StatusForbidden, gin.H{"message": "Access denied"})
-		return
-	}
-
 	id := c.Param("id")
 	var product models.Product
 	if err := config.DB.First(&product, id).Error; err != nil {
@@ -385,13 +384,11 @@ func UpdateProduct(c *gin.Context) {
 		}
 	}
 
-	if file, err := c.FormFile("image"); err == nil {
-		filename := fmt.Sprintf("%d_%s", time.Now().Unix(), filepath.Base(file.Filename))
-		uploadPath := filepath.Join("uploads", filename)
-		if err := c.SaveUploadedFile(file, uploadPath); err == nil {
-			imageURL := "http://" + c.Request.Host + "/uploads/" + filename
-			updates["image"] = imageURL
-		}
+	if imageURL, err := saveUploadedImage(c, "image", ""); err == nil {
+		updates["image"] = imageURL
+	} else if err != errNoFile {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		return
 	}
 
 	config.DB.Model(&product).Updates(updates)
@@ -406,13 +403,6 @@ func UpdateProduct(c *gin.Context) {
 // @Success 200 {object} map[string]interface{}
 // @Router /products/{id} [delete]
 func DeleteProduct(c *gin.Context) {
-	role, _ := c.Get("role")
-	roleStr := role.(string)
-	if roleStr != models.RoleAdmin && roleStr != models.RoleVendor {
-		c.JSON(http.StatusForbidden, gin.H{"message": "Access denied"})
-		return
-	}
-
 	id := c.Param("id")
 	var product models.Product
 	if err := config.DB.First(&product, id).Error; err != nil {

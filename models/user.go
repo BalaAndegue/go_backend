@@ -8,6 +8,7 @@ import (
 const (
 	RoleCustomer   = "CUSTOMER"
 	RoleAdmin      = "ADMIN"
+	RoleSuperAdmin = "SUPERADMIN"
 	RoleVendor     = "VENDOR"
 	RoleDelivery   = "DELIVERY"
 	RoleManager    = "MANAGER"
@@ -27,11 +28,24 @@ type User struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-func (u *User) IsAdmin() bool      { return u.Role == RoleAdmin }
+func (u *User) IsAdmin() bool      { return u.Role == RoleAdmin || u.Role == RoleSuperAdmin }
 func (u *User) IsVendor() bool     { return u.Role == RoleVendor }
 func (u *User) IsDelivery() bool   { return u.Role == RoleDelivery }
 func (u *User) IsManager() bool    { return u.Role == RoleManager }
 func (u *User) IsSupervisor() bool { return u.Role == RoleSupervisor }
 func (u *User) IsManagement() bool {
-	return u.Role == RoleAdmin || u.Role == RoleManager || u.Role == RoleSupervisor
+	return u.IsAdmin() || u.Role == RoleManager || u.Role == RoleSupervisor
+}
+
+// CanAssignRole reports whether a user with this role may grant the given
+// target role to another account. Only admins can create or promote privileged
+// roles (ADMIN/SUPERADMIN); lower management roles cannot escalate privileges.
+func (u *User) CanAssignRole(target string) bool {
+	if !u.IsManagement() {
+		return false
+	}
+	if target == RoleAdmin || target == RoleSuperAdmin {
+		return u.IsAdmin()
+	}
+	return true
 }

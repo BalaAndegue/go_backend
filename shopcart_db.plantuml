@@ -1,0 +1,145 @@
+@startuml
+
+!theme plain
+top to bottom direction
+skinparam linetype ortho
+
+class cart_items {
+   id: bigint
+   cart_id: bigint
+   product_variant_id: bigint
+   quantity: bigint
+   unit_price: numeric(12,2)
+   total: numeric(12,2)
+   created_at: timestamp with time zone
+   updated_at: timestamp with time zone
+}
+class carts {
+   id: bigint
+   user_id: bigint
+   session_id: varchar(100)
+   items_count: bigint
+   total: numeric(12,2)
+   created_at: timestamp with time zone
+   updated_at: timestamp with time zone
+}
+class categories {
+   id: bigint
+   name: varchar(255)
+   slug: varchar(255)
+   image: varchar(500)
+   created_at: timestamp with time zone
+   updated_at: timestamp with time zone
+}
+class delivery_geolocations {
+   id: bigint
+   user_id: bigint
+   latitude: numeric(10,6)
+   longitude: numeric(10,6)
+   created_at: timestamp with time zone
+   updated_at: timestamp with time zone
+}
+class order_items {
+   id: bigint
+   order_id: bigint
+   product_id: bigint
+   product_variant_id: bigint
+   product_name: varchar(255)
+   product_sku: varchar(100)
+   quantity: bigint
+   unit_price: numeric(12,2)
+   total: numeric(12,2)
+   created_at: timestamp with time zone
+   updated_at: timestamp with time zone
+}
+class orders {
+   id: bigint
+   order_number: varchar(100)
+   status: varchar(50)
+   user_id: bigint
+   delivery_user_id: bigint
+   customer_name: varchar(255)
+   customer_email: varchar(255)
+   customer_phone: varchar(50)
+   shipping_address: text
+   shipping_city: varchar(100)
+   shipping_zipcode: varchar(20)
+   shipping_country: varchar(100)
+   billing_address: text
+   billing_city: varchar(100)
+   billing_zipcode: varchar(20)
+   billing_country: varchar(100)
+   payment_method: varchar(100)
+   notes: text
+   subtotal: numeric(12,2)
+   shipping: numeric(12,2)
+   tax: numeric(12,2)
+   total: numeric(12,2)
+   proof_path: varchar(500)
+   proof_type: varchar(50)
+   created_at: timestamp with time zone
+   updated_at: timestamp with time zone
+}
+class payments {
+   id: bigint
+   order_id: bigint
+   amount: numeric(12,2)
+   method: varchar(100)
+   status: varchar(50)
+   transaction_id: varchar(255)
+   created_at: timestamp with time zone
+   updated_at: timestamp with time zone
+}
+class product_variants {
+   id: bigint
+   productId: bigint
+   name: varchar(255)
+   sku: varchar(100)
+   price: numeric(12,2)
+   stock: bigint
+   color: varchar(50)
+   attributes: jsonb
+   image: varchar(500)
+   created_at: timestamp with time zone
+   updated_at: timestamp with time zone
+}
+class products {
+   id: bigint
+   name: varchar(255)
+   slug: varchar(255)
+   description: text
+   price: numeric(12,2)
+   compare_price: numeric(12,2)
+   stock: bigint
+   sku: varchar(100)
+   image: varchar(500)
+   is_visible: boolean
+   is_featured: boolean
+   category_id: bigint
+   created_at: timestamp with time zone
+   updated_at: timestamp with time zone
+}
+class users {
+   id: bigint
+   name: varchar(255)
+   email: varchar(255)
+   password: varchar(255)
+   role: varchar(50)
+   phone: varchar(100)
+   address: text
+   fcm_token: varchar(500)
+   created_at: timestamp with time zone
+   updated_at: timestamp with time zone
+}
+
+cart_items             -[#595959,plain]-^  carts                 : "cart_id:id"
+cart_items             -[#595959,plain]-^  product_variants      : "product_variant_id:id"
+carts                  -[#595959,plain]-^  users                 : "user_id:id"
+delivery_geolocations  -[#595959,plain]-^  users                 : "user_id:id"
+order_items            -[#595959,plain]-^  orders                : "order_id:id"
+order_items            -[#595959,plain]-^  product_variants      : "product_variant_id:id"
+order_items            -[#595959,plain]-^  products              : "product_id:id"
+orders                 -[#595959,plain]-^  users                 : "user_id:id"
+payments               -[#595959,plain]-^  orders                : "order_id:id"
+products               -[#595959,plain]-^  categories            : "category_id:id"
+@enduml

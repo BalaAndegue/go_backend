@@ -1,20 +1,22 @@
 package utils
 
 import (
+	"log"
 	"os"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 )
 
-var jwtKey = []byte(getJWTKey())
-
-func getJWTKey() string {
+// getJWTKey resolves the signing key at call time (not package-init time) so
+// that values loaded from a .env file by godotenv in main() are picked up.
+func getJWTKey() []byte {
 	key := os.Getenv("JWT_SECRET")
 	if key == "" {
-		return "super_secret_key_change_me_in_prod"
+		log.Println("WARNING: JWT_SECRET is not set; falling back to an insecure default key")
+		return []byte("super_secret_key_change_me_in_prod")
 	}
-	return key
+	return []byte(key)
 }
 
 func GenerateToken(userID uint, role string) (string, error) {
@@ -26,12 +28,16 @@ func GenerateToken(userID uint, role string) (string, error) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(jwtKey)
+	return token.SignedString(getJWTKey())
 }
 
 func ValidateToken(tokenString string) (jwt.MapClaims, error) {
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		return jwtKey, nil
+		// Pin the signing method to prevent algorithm-confusion attacks.
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, jwt.ErrSignatureInvalid
+		}
+		return getJWTKey(), nil
 	})
 
 	if err != nil {

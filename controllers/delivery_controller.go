@@ -3,8 +3,6 @@ package controllers
 import (
 	"fmt"
 	"net/http"
-	"path/filepath"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"shopcart-api/config"
@@ -24,7 +22,7 @@ func GetPendingDeliveries(c *gin.Context) {
 
 	var orders []models.Order
 	config.DB.Preload("Items").
-		Where("delivery_user_id IS NULL AND status IN ?", []string{models.StatusPaid, models.StatusPendingPayment}).
+		Where("delivery_user_id IS NULL AND status IN ?", []string{models.StatusPaid, models.StatusProcessing}).
 		Order("created_at ASC").Find(&orders)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Pending orders retrieved successfully", "data": orders, "status": "success", "code": 200})
@@ -68,7 +66,7 @@ func AssignDelivery(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": fmt.Sprintf("Order %d assigned to delivery user %s successfully", order.ID, deliveryUser.Name),
-		"data": order, "status": "success", "code": 200,
+		"data":    order, "status": "success", "code": 200,
 	})
 }
 
@@ -129,11 +127,15 @@ func UpdateDeliveryStatus(c *gin.Context) {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
 		return
 	}
+	if !models.IsValidOrderStatus(body.Status) {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "Invalid status"})
+		return
+	}
 
 	config.DB.Model(&order).Update("status", body.Status)
 	c.JSON(http.StatusOK, gin.H{
 		"message": fmt.Sprintf("Delivery status updated to %s for order %d", body.Status, order.ID),
-		"data": order, "status": "success", "code": 200,
+		"data":    order, "status": "success", "code": 200,
 	})
 }
 
@@ -207,19 +209,15 @@ func UploadProof(c *gin.Context) {
 	}
 
 	proofType := c.PostForm("proof_type")
-	file, err := c.FormFile("proof_image")
+	proofURL, err := saveUploadedImage(c, "proof_image", "proofs")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"message": "Image upload failed."})
+		if err == errNoFile {
+			c.JSON(http.StatusBadRequest, gin.H{"message": "Image upload failed."})
+		} else {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"message": err.Error()})
+		}
 		return
 	}
-
-	filename := fmt.Sprintf("%d_%s", time.Now().Unix(), filepath.Base(file.Filename))
-	uploadPath := filepath.Join("uploads", "proofs", filename)
-	if err := c.SaveUploadedFile(file, uploadPath); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"message": "Image upload failed."})
-		return
-	}
-	proofURL := "http://" + c.Request.Host + "/uploads/proofs/" + filename
 	config.DB.Model(&order).Updates(map[string]interface{}{
 		"proof_path": proofURL, "proof_type": proofType, "status": models.StatusDelivered,
 	})
@@ -254,7 +252,7 @@ func GetProof(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Delivery proof path retrieved successfully.",
-		"data": gin.H{"proof_url": *order.ProofPath, "proof_type": order.ProofType},
-		"status": "success", "code": 200,
+		"data":    gin.H{"proof_url": *order.ProofPath, "proof_type": order.ProofType},
+		"status":  "success", "code": 200,
 	})
 }

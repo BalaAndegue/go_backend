@@ -1,12 +1,9 @@
 package controllers
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
-	"path/filepath"
-	"time"
-
-	"encoding/json"
 
 	"github.com/gin-gonic/gin"
 	"shopcart-api/config"
@@ -17,7 +14,8 @@ import (
 // ===== PRODUCT VARIANT CONTROLLER =====
 
 func GetProductVariants(c *gin.Context) {
-	productID := c.Param("product_id")
+	// Mounted on GET /products/id/:id/variants, so the path param is ":id".
+	productID := c.Param("id")
 	var product models.Product
 	if err := config.DB.First(&product, productID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "Product not found", "code": 404})
@@ -76,13 +74,11 @@ func CreateProductVariant(c *gin.Context) {
 		}
 	}
 
-	if file, err := c.FormFile("image"); err == nil {
-		filename := fmt.Sprintf("%d_%s", time.Now().Unix(), filepath.Base(file.Filename))
-		uploadPath := filepath.Join("uploads", filename)
-		if err := c.SaveUploadedFile(file, uploadPath); err == nil {
-			imageURL := "http://" + c.Request.Host + "/uploads/" + filename
-			variant.Image = &imageURL
-		}
+	if imageURL, err := saveUploadedImage(c, "image", ""); err == nil {
+		variant.Image = &imageURL
+	} else if err != errNoFile {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		return
 	}
 
 	if err := config.DB.Create(&variant).Error; err != nil {
@@ -126,13 +122,11 @@ func UpdateProductVariant(c *gin.Context) {
 	if color := c.PostForm("color"); color != "" {
 		updates["color"] = color
 	}
-	if file, err := c.FormFile("image"); err == nil {
-		filename := fmt.Sprintf("%d_%s", time.Now().Unix(), filepath.Base(file.Filename))
-		uploadPath := filepath.Join("uploads", filename)
-		if err := c.SaveUploadedFile(file, uploadPath); err == nil {
-			imageURL := "http://" + c.Request.Host + "/uploads/" + filename
-			updates["image"] = imageURL
-		}
+	if imageURL, err := saveUploadedImage(c, "image", ""); err == nil {
+		updates["image"] = imageURL
+	} else if err != errNoFile {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		return
 	}
 
 	config.DB.Model(&variant).Updates(updates)

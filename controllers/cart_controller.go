@@ -1,10 +1,10 @@
 package controllers
 
 import (
-	"math/rand"
-	"net/http"
-	"time"
+	"crypto/rand"
+	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -12,28 +12,60 @@ import (
 	"shopcart-api/models"
 )
 
+// abortCartUnavailable writes a standard error response when the user's cart
+// cannot be loaded or created.
+func abortCartUnavailable(c *gin.Context) {
+	c.JSON(http.StatusInternalServerError, gin.H{
+		"status": "error", "message": "Impossible d'accéder au panier", "code": 500,
+	})
+}
+
+// getOrCreateCart returns the authenticated user's cart, creating one on first
+// access. It returns nil when there is no authenticated user (callers are
+// expected to run behind the Auth middleware) or when the cart cannot be
+// created, so callers must guard against a nil result.
 func getOrCreateCart(c *gin.Context) *models.Cart {
 	userID, exists := c.Get("user_id")
+	if !exists {
+		return nil
+	}
+
+	uid := userID.(uint)
 	var cart models.Cart
-	var err error
-	if exists {
-		uid := userID.(uint)
-		err = config.DB.Where("user_id = ?", uid).First(&cart).Error
-		if err == gorm.ErrRecordNotFound {
-			sessionID := generateSessionID()
-			cart = models.Cart{UserID: &uid, SessionID: sessionID}
-			config.DB.Create(&cart)
+	err := config.DB.Where("user_id = ?", uid).First(&cart).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		cart = models.Cart{UserID: &uid, SessionID: generateSessionID()}
+		if err := config.DB.Create(&cart).Error; err != nil {
+			return nil
 		}
+	} else if err != nil {
+		return nil
 	}
 	return &cart
 }
 
+// userOwnsCart reports whether the given cart belongs to the authenticated
+// user. Used to prevent one user from mutating another user's cart items.
+func userOwnsCart(c *gin.Context, cartID uint) bool {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		return false
+	}
+	var cart models.Cart
+	if err := config.DB.First(&cart, cartID).Error; err != nil {
+		return false
+	}
+	return cart.UserID != nil && *cart.UserID == userID.(uint)
+}
+
 func generateSessionID() string {
 	const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	rand.Seed(time.Now().UnixNano())
 	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		panic(err) // crypto/rand should never fail; fail loudly if it does
+	}
 	for i := range b {
-		b[i] = letters[rand.Intn(len(letters))]
+		b[i] = letters[int(b[i])%len(letters)]
 	}
 	return string(b)
 }
@@ -60,6 +92,10 @@ func updateCartTotals(cartID uint) {
 // @Router /cart [get]
 func ShowCart(c *gin.Context) {
 	cart := getOrCreateCart(c)
+	if cart == nil {
+		abortCartUnavailable(c)
+		return
+	}
 	config.DB.Preload("Items.ProductVariant.Product").First(cart, cart.ID)
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": cart, "message": "Panier récupéré avec succès", "code": 200})
 }
@@ -71,6 +107,10 @@ func ShowCart(c *gin.Context) {
 // @Router /cart [post]
 func StoreCart(c *gin.Context) {
 	cart := getOrCreateCart(c)
+	if cart == nil {
+		abortCartUnavailable(c)
+		return
+	}
 	config.DB.Preload("Items.ProductVariant.Product").First(cart, cart.ID)
 	c.JSON(http.StatusOK, gin.H{"status": "success", "data": cart, "message": "Panier récupéré", "code": 200})
 }
@@ -108,6 +148,10 @@ func AddCartItem(c *gin.Context) {
 	}
 
 	cart := getOrCreateCart(c)
+	if cart == nil {
+		abortCartUnavailable(c)
+		return
+	}
 
 	var existingItem models.CartItem
 	err := config.DB.Where("cart_id = ? AND product_variant_id = ?", cart.ID, input.ProductVariantID).First(&existingItem).Error
@@ -155,6 +199,11 @@ func UpdateCartItem(c *gin.Context) {
 		return
 	}
 
+	if !userOwnsCart(c, item.CartID) {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "message": "Non autorisé", "code": 403})
+		return
+	}
+
 	var input UpdateItemInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
@@ -185,6 +234,11 @@ func RemoveCartItem(c *gin.Context) {
 		return
 	}
 
+	if !userOwnsCart(c, item.CartID) {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "message": "Non autorisé", "code": 403})
+		return
+	}
+
 	cartID := item.CartID
 	config.DB.Delete(&item)
 	updateCartTotals(cartID)
@@ -200,6 +254,10 @@ func RemoveCartItem(c *gin.Context) {
 // @Router /cart/clear [delete]
 func ClearCart(c *gin.Context) {
 	cart := getOrCreateCart(c)
+	if cart == nil {
+		abortCartUnavailable(c)
+		return
+	}
 	config.DB.Where("cart_id = ?", cart.ID).Delete(&models.CartItem{})
 	updateCartTotals(cart.ID)
 	config.DB.First(cart, cart.ID)
@@ -210,7 +268,7 @@ func ClearCart(c *gin.Context) {
 // @Tags Cart
 // @Param userId path int true "User ID"
 // @Success 200 {object} map[string]interface{}
-// @Router /cart/user/{userId}/empty [get]
+// @Router /cart/user/{userId}/empty [delete]
 func EmptyUserCart(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 	targetUserID := c.Param("userId")
@@ -218,8 +276,7 @@ func EmptyUserCart(c *gin.Context) {
 	user := models.User{}
 	config.DB.First(&user, userID.(uint))
 
-	var uidStr string
-	uidStr = fmt.Sprintf("%d", userID.(uint))
+	uidStr := fmt.Sprintf("%d", userID.(uint))
 
 	if uidStr != targetUserID && !user.IsManagement() {
 		c.JSON(http.StatusForbidden, gin.H{"status": "error", "message": "Non autorisé", "code": 403})

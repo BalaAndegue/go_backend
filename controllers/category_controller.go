@@ -1,10 +1,7 @@
 package controllers
 
 import (
-	"fmt"
 	"net/http"
-	"path/filepath"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"shopcart-api/config"
@@ -52,13 +49,11 @@ func CreateCategory(c *gin.Context) {
 	category := models.Category{Name: input.Name, Slug: utils.GenerateSlug(input.Name)}
 
 	// Handle image upload
-	if file, err := c.FormFile("image"); err == nil {
-		filename := fmt.Sprintf("%d_%s", time.Now().Unix(), filepath.Base(file.Filename))
-		uploadPath := filepath.Join("uploads", filename)
-		if err := c.SaveUploadedFile(file, uploadPath); err == nil {
-			imageURL := "http://" + c.Request.Host + "/uploads/" + filename
-			category.Image = &imageURL
-		}
+	if imageURL, err := saveUploadedImage(c, "image", ""); err == nil {
+		category.Image = &imageURL
+	} else if err != errNoFile {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		return
 	}
 
 	if err := config.DB.Create(&category).Error; err != nil {
@@ -81,13 +76,11 @@ func UpdateCategory(c *gin.Context) {
 		updates["name"] = name
 		updates["slug"] = utils.GenerateSlug(name)
 	}
-	if file, err := c.FormFile("image"); err == nil {
-		filename := fmt.Sprintf("%d_%s", time.Now().Unix(), filepath.Base(file.Filename))
-		uploadPath := filepath.Join("uploads", filename)
-		if err := c.SaveUploadedFile(file, uploadPath); err == nil {
-			imageURL := "http://" + c.Request.Host + "/uploads/" + filename
-			updates["image"] = imageURL
-		}
+	if imageURL, err := saveUploadedImage(c, "image", ""); err == nil {
+		updates["image"] = imageURL
+	} else if err != errNoFile {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		return
 	}
 
 	config.DB.Model(&category).Updates(updates)

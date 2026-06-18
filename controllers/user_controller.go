@@ -35,6 +35,21 @@ func isValidRole(role string) bool {
 	return false
 }
 
+// currentUser loads the authenticated user from the database using the user_id
+// set by the Auth middleware. It returns false when there is no authenticated
+// user or the record cannot be found.
+func currentUser(c *gin.Context) (*models.User, bool) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		return nil, false
+	}
+	var user models.User
+	if err := config.DB.First(&user, userID.(uint)).Error; err != nil {
+		return nil, false
+	}
+	return &user, true
+}
+
 func ListUsers(c *gin.Context) {
 	var users []models.User
 	query := config.DB.Order("created_at DESC")
@@ -53,6 +68,22 @@ func CreateUser(c *gin.Context) {
 	}
 	if !isValidRole(input.Role) {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "Invalid role"})
+		return
+	}
+
+	actor, ok := currentUser(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthenticated"})
+		return
+	}
+	if !actor.CanAssignRole(input.Role) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You are not allowed to assign this role"})
+		return
+	}
+
+	var existing models.User
+	if err := config.DB.Where("email = ?", input.Email).First(&existing).Error; err == nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "Email already exists"})
 		return
 	}
 
@@ -100,6 +131,17 @@ func UpdateUser(c *gin.Context) {
 		return
 	}
 
+	actor, ok := currentUser(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"message": "Unauthenticated"})
+		return
+	}
+	// Only an admin may modify an existing admin/superadmin account.
+	if user.IsAdmin() && !actor.IsAdmin() {
+		c.JSON(http.StatusForbidden, gin.H{"message": "You are not allowed to modify this user"})
+		return
+	}
+
 	updates := map[string]interface{}{}
 	var body struct {
 		Name     string `json:"name"`
@@ -109,14 +151,30 @@ func UpdateUser(c *gin.Context) {
 		Phone    string `json:"phone"`
 		Address  string `json:"address"`
 	}
-	c.ShouldBindJSON(&body)
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		return
+	}
 	if body.Name != "" {
 		updates["name"] = body.Name
 	}
-	if body.Email != "" {
+	if body.Email != "" && body.Email != user.Email {
+		var existing models.User
+		if err := config.DB.Where("email = ? AND id <> ?", body.Email, user.ID).First(&existing).Error; err == nil {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "Email already exists"})
+			return
+		}
 		updates["email"] = body.Email
 	}
-	if body.Role != "" && isValidRole(body.Role) {
+	if body.Role != "" {
+		if !isValidRole(body.Role) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "Invalid role"})
+			return
+		}
+		if !actor.CanAssignRole(body.Role) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "You are not allowed to assign this role"})
+			return
+		}
 		updates["role"] = body.Role
 	}
 	if body.Password != "" {

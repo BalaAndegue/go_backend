@@ -1,0 +1,18 @@
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Build artifacts
+/shopcart-api
+*.exe
+
+# Uploaded media (runtime data)
+/uploads/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store

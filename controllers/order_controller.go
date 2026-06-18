@@ -1,8 +1,8 @@
 package controllers
 
 import (
+	"crypto/rand"
 	"fmt"
-	"math/rand"
 	"net/http"
 	"time"
 
@@ -29,11 +29,13 @@ type CreateOrderInput struct {
 }
 
 func generateOrderNumber() string {
-	rand.Seed(time.Now().UnixNano())
 	const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	b := make([]byte, 6)
+	if _, err := rand.Read(b); err != nil {
+		panic(err) // crypto/rand should never fail; fail loudly if it does
+	}
 	for i := range b {
-		b[i] = letters[rand.Intn(len(letters))]
+		b[i] = letters[int(b[i])%len(letters)]
 	}
 	return fmt.Sprintf("ORD-%s-%s", time.Now().Format("20060102"), string(b))
 }
@@ -160,8 +162,19 @@ func CreateOrder(c *gin.Context) {
 			productName = cartItem.ProductVariant.Name
 			productSKU = cartItem.ProductVariant.SKU
 			productID = &cartItem.ProductVariant.ProductID
-			tx.Model(&models.ProductVariant{}).Where("id = ?", cartItem.ProductVariantID).
+			// Conditional decrement: only succeeds if enough stock remains.
+			// This guards against overselling under concurrent checkouts, since
+			// the WHERE clause is evaluated atomically by the database.
+			res := tx.Model(&models.ProductVariant{}).
+				Where("id = ? AND stock >= ?", cartItem.ProductVariantID, cartItem.Quantity).
 				UpdateColumn("stock", gorm.Expr("stock - ?", cartItem.Quantity))
+			if res.Error != nil || res.RowsAffected == 0 {
+				tx.Rollback()
+				c.JSON(http.StatusUnprocessableEntity, gin.H{
+					"message": fmt.Sprintf("Stock insuffisant pour la variante ID %d.", cartItem.ProductVariantID),
+				})
+				return
+			}
 		}
 
 		total := cartItem.UnitPrice * float64(cartItem.Quantity)
@@ -207,6 +220,10 @@ func UpdateOrderStatus(c *gin.Context) {
 	var input UpdateOrderStatusInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		return
+	}
+	if !models.IsValidOrderStatus(input.Status) {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "Invalid order status"})
 		return
 	}
 

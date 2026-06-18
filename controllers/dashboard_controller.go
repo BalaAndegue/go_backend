@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 	"shopcart-api/config"
 	"shopcart-api/models"
 )
@@ -31,7 +30,7 @@ func GetKpis(c *gin.Context) {
 
 	var (
 		totalOrders, deliveredOrders, readyToShip, inDelivery, successDeliveries, failedDeliveries int64
-		totalRevenue                                                                                float64
+		totalRevenue                                                                               float64
 	)
 
 	config.DB.Model(&models.Order{}).Count(&totalOrders)
@@ -203,6 +202,3 @@ func StorePayment(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, gin.H{"message": "Payment registered", "data": payment})
 }
-
-// suppress unused import
-var _ = gorm.ErrRecordNotFound

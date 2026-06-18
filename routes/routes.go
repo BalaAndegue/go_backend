@@ -21,7 +21,10 @@ func SetupRoutes(r *gin.Engine) {
 		api.GET("/products/featured", controllers.GetFeaturedProducts)
 		api.GET("/products/id/:id", controllers.GetProductByID)
 		api.GET("/products/:slug", controllers.GetProduct)
-		api.GET("/products/:product_id/variants", controllers.GetProductVariants)
+
+		// Use the existing /id/ prefix to avoid the collision.
+		// Param name must match the others on this path segment (:id).
+		api.GET("/products/id/:id/variants", controllers.GetProductVariants)
 
 		// Public Categories
 		api.GET("/categories", controllers.GetCategories)
@@ -69,18 +72,24 @@ func SetupRoutes(r *gin.Engine) {
 			auth.GET("/deliveries/:order/proof", controllers.GetProof)
 
 			// =====================
-			//  MANAGEMENT ROUTES (ADMIN, MANAGER, SUPERVISOR)
+			//  PRODUCT MANAGEMENT ROUTES (ADMIN, SUPERADMIN, VENDOR)
+			// =====================
+			productMgmt := auth.Group("")
+			productMgmt.Use(middlewares.ProductManagement())
+			{
+				productMgmt.POST("/products", controllers.CreateProduct)
+				productMgmt.PUT("/products/:id", controllers.UpdateProduct)
+				productMgmt.DELETE("/products/:id", controllers.DeleteProduct)
+				productMgmt.GET("/products/vendor/stats", controllers.GetVendorStats)
+				productMgmt.GET("/products/vendor/my-products", controllers.GetMyProducts)
+			}
+
+			// =====================
+			//  MANAGEMENT ROUTES (ADMIN, SUPERADMIN, MANAGER, SUPERVISOR)
 			// =====================
 			mgmt := auth.Group("")
 			mgmt.Use(middlewares.Management())
 			{
-				// Products management
-				mgmt.POST("/products", controllers.CreateProduct)
-				mgmt.PUT("/products/:id", controllers.UpdateProduct)
-				mgmt.DELETE("/products/:id", controllers.DeleteProduct)
-				mgmt.GET("/products/vendor/stats", controllers.GetVendorStats)
-				mgmt.GET("/products/vendor/my-products", controllers.GetMyProducts)
-
 				// Categories management
 				mgmt.POST("/categories", controllers.CreateCategory)
 				mgmt.PUT("/categories/:id", controllers.UpdateCategory)
