@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"shopcart-api/config"
+	"shopcart-api/models"
 	"shopcart-api/utils"
 )
 
@@ -31,8 +33,30 @@ func Auth() gin.HandlerFunc {
 			return
 		}
 
-		c.Set("user_id", uint(claims["user_id"].(float64)))
-		c.Set("role", claims["role"].(string))
+		// Only access tokens may be used to authenticate API requests.
+		if t, _ := claims["type"].(string); t != "access" {
+			c.JSON(http.StatusUnauthorized, gin.H{"message": "Unauthenticated: Invalid token type"})
+			c.Abort()
+			return
+		}
+
+		userID := uint(claims["user_id"].(float64))
+
+		// Verify the token version against the user to honour revocation.
+		var user models.User
+		if err := config.DB.Select("id", "role", "token_version").First(&user, userID).Error; err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"message": "Unauthenticated: User not found"})
+			c.Abort()
+			return
+		}
+		if ver, ok := claims["ver"].(float64); !ok || int(ver) != user.TokenVersion {
+			c.JSON(http.StatusUnauthorized, gin.H{"message": "Unauthenticated: Token revoked"})
+			c.Abort()
+			return
+		}
+
+		c.Set("user_id", userID)
+		c.Set("role", user.Role)
 		c.Next()
 	}
 }

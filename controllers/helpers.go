@@ -9,6 +9,14 @@ import (
 	"shopcart-api/models"
 )
 
+// getenvDefault returns the env var value or def when it is unset.
+func getenvDefault(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
 // envFloat reads a float env var, falling back to def when unset/invalid.
 func envFloat(key string, def float64) float64 {
 	if v, err := strconv.ParseFloat(os.Getenv(key), 64); err == nil {

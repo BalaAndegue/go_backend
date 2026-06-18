@@ -15,6 +15,11 @@ func SetupRoutes(r *gin.Engine) {
 		api.POST("/register", controllers.Register)
 		api.POST("/registerAdmin", controllers.RegisterAdmin)
 		api.POST("/login", controllers.Login)
+		api.POST("/refresh", controllers.RefreshToken)
+		api.POST("/password/forgot", controllers.ForgotPassword)
+		api.POST("/password/reset", controllers.ResetPassword)
+		api.POST("/email/verify", controllers.VerifyEmail)
+		api.GET("/email/verify", controllers.VerifyEmail)
 
 		// Public Products
 		api.GET("/products", controllers.GetProducts)
@@ -25,6 +30,9 @@ func SetupRoutes(r *gin.Engine) {
 		// Use the existing /id/ prefix to avoid the collision.
 		// Param name must match the others on this path segment (:id).
 		api.GET("/products/id/:id/variants", controllers.GetProductVariants)
+
+		// Public product reviews
+		api.GET("/products/id/:id/reviews", controllers.GetProductReviews)
 
 		// Public Categories
 		api.GET("/categories", controllers.GetCategories)
@@ -39,6 +47,7 @@ func SetupRoutes(r *gin.Engine) {
 		{
 			auth.POST("/logout", controllers.Logout)
 			auth.GET("/user", controllers.GetProfile)
+			auth.POST("/email/resend", controllers.ResendVerification)
 
 			// My profile
 			auth.GET("/users/me", controllers.GetUserMe)
@@ -59,6 +68,18 @@ func SetupRoutes(r *gin.Engine) {
 			auth.GET("/orders/:order", controllers.GetOrder)
 			auth.GET("/orders/my", controllers.GetMyOrders)
 			auth.POST("/orders/:order/cancel", controllers.CancelOrder)
+
+			// Reviews
+			auth.POST("/products/id/:id/reviews", controllers.CreateReview)
+			auth.DELETE("/reviews/:id", controllers.DeleteReview)
+
+			// Wishlist
+			auth.GET("/wishlist", controllers.GetWishlist)
+			auth.POST("/wishlist", controllers.AddWishlist)
+			auth.DELETE("/wishlist/:product", controllers.RemoveWishlist)
+
+			// Coupons
+			auth.POST("/coupons/validate", controllers.ValidateCoupon)
 
 			// Payment
 			auth.POST("/payments/intent", controllers.CreatePaymentIntent)
@@ -103,6 +124,11 @@ func SetupRoutes(r *gin.Engine) {
 
 				// Orders management
 				mgmt.PUT("/orders/:order/status", controllers.UpdateOrderStatus)
+
+				// Coupons management
+				mgmt.GET("/coupons", controllers.ListCoupons)
+				mgmt.POST("/coupons", controllers.CreateCoupon)
+				mgmt.DELETE("/coupons/:id", controllers.DeleteCoupon)
 
 				// User management
 				mgmt.GET("/users", controllers.ListUsers)

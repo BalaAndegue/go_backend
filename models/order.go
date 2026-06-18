@@ -59,6 +59,8 @@ type Order struct {
 	PaymentMethod   string      `gorm:"size:100" json:"payment_method"`
 	Notes           *string     `gorm:"type:text" json:"notes,omitempty"`
 	Subtotal        float64     `gorm:"type:numeric(12,2);default:0" json:"subtotal"`
+	Discount        float64     `gorm:"type:numeric(12,2);default:0" json:"discount"`
+	CouponCode      *string     `gorm:"size:50" json:"coupon_code,omitempty"`
 	Shipping        float64     `gorm:"type:numeric(12,2);default:0" json:"shipping"`
 	Tax             float64     `gorm:"type:numeric(12,2);default:0" json:"tax"`
 	Total           float64     `gorm:"type:numeric(12,2);default:0" json:"total"`

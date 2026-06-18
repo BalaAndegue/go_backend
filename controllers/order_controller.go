@@ -26,6 +26,7 @@ type CreateOrderInput struct {
 	BillingCountry  string `json:"billing_country"`
 	PaymentMethod   string `json:"payment_method" binding:"required"`
 	Notes           string `json:"notes"`
+	CouponCode      string `json:"coupon_code"`
 }
 
 func generateOrderNumber() string {
@@ -141,7 +142,25 @@ func CreateOrder(c *gin.Context) {
 	}
 
 	subtotal := cart.Total
-	shipping, tax, total := computeOrderCharges(subtotal)
+
+	// Apply an optional coupon to the subtotal before computing charges.
+	var coupon *models.Coupon
+	var discount float64
+	if input.CouponCode != "" {
+		var cp models.Coupon
+		if err := config.DB.Where("code = ?", models.NormalizeCode(input.CouponCode)).First(&cp).Error; err != nil {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"message": "Invalid coupon code"})
+			return
+		}
+		if ok, reason := cp.Validate(subtotal); !ok {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"message": "Coupon invalid: " + reason})
+			return
+		}
+		coupon = &cp
+		discount = round2(cp.DiscountFor(subtotal))
+	}
+
+	shipping, tax, total := computeOrderCharges(subtotal - discount)
 
 	order := models.Order{
 		OrderNumber:     generateOrderNumber(),
@@ -161,9 +180,14 @@ func CreateOrder(c *gin.Context) {
 		PaymentMethod:   input.PaymentMethod,
 		Notes:           notes,
 		Subtotal:        subtotal,
+		Discount:        discount,
 		Shipping:        shipping,
 		Tax:             tax,
 		Total:           total,
+	}
+	if coupon != nil {
+		code := coupon.Code
+		order.CouponCode = &code
 	}
 
 	tx := config.DB.Begin()
@@ -210,6 +234,12 @@ func CreateOrder(c *gin.Context) {
 			orderItem.ProductSKU = &productSKU
 		}
 		tx.Create(&orderItem)
+	}
+
+	// Record coupon usage.
+	if coupon != nil {
+		tx.Model(&models.Coupon{}).Where("id = ?", coupon.ID).
+			UpdateColumn("used_count", gorm.Expr("used_count + 1"))
 	}
 
 	// Clear cart

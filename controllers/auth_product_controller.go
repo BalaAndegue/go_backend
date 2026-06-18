@@ -105,20 +105,38 @@ func createUser(c *gin.Context, input RegisterInput, role string) {
 		return
 	}
 
-	token, err := utils.GenerateToken(user.ID, user.Role)
+	token, refresh, err := issueTokens(&user)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not generate token"})
 		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{
-		"message": "Registered",
-		"token":   token,
+	resp := gin.H{
+		"message":       "Registered",
+		"token":         token,
+		"refresh_token": refresh,
 		"user": gin.H{
 			"id": user.ID, "name": user.Name, "email": user.Email,
 			"role": user.Role, "phone": user.Phone, "address": user.Address,
 		},
-	})
+	}
+	if raw, err := issueEmailVerifyToken(user.ID); err == nil && exposeTokens() {
+		resp["verification_token"] = raw
+	}
+	c.JSON(http.StatusCreated, resp)
+}
+
+// issueTokens generates an access + refresh token pair for the given user.
+func issueTokens(user *models.User) (access, refresh string, err error) {
+	access, err = utils.GenerateToken(user.ID, user.Role, user.TokenVersion)
+	if err != nil {
+		return "", "", err
+	}
+	refresh, err = utils.GenerateRefreshToken(user.ID, user.TokenVersion)
+	if err != nil {
+		return "", "", err
+	}
+	return access, refresh, nil
 }
 
 type LoginInput struct {
@@ -152,20 +170,60 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	token, err := utils.GenerateToken(user.ID, user.Role)
+	token, refresh, err := issueTokens(&user)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not generate token"})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Login successful",
-		"token":   token,
+		"message":       "Login successful",
+		"token":         token,
+		"refresh_token": refresh,
 		"user": gin.H{
 			"id": user.ID, "name": user.Name, "email": user.Email,
 			"role": user.Role, "phone": user.Phone, "address": user.Address,
 		},
 	})
+}
+
+// RefreshToken exchanges a valid refresh token for a new access/refresh pair.
+func RefreshToken(c *gin.Context) {
+	var input struct {
+		RefreshToken string `json:"refresh_token" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		return
+	}
+
+	claims, err := utils.ValidateToken(input.RefreshToken)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired refresh token"})
+		return
+	}
+	if t, _ := claims["type"].(string); t != "refresh" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Not a refresh token"})
+		return
+	}
+
+	userID := uint(claims["user_id"].(float64))
+	var user models.User
+	if err := config.DB.First(&user, userID).Error; err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
+		return
+	}
+	if ver, ok := claims["ver"].(float64); !ok || int(ver) != user.TokenVersion {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Refresh token revoked"})
+		return
+	}
+
+	token, refresh, err := issueTokens(&user)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not generate token"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"token": token, "refresh_token": refresh})
 }
 
 // @Summary Déconnexion
@@ -174,6 +232,11 @@ func Login(c *gin.Context) {
 // @Success 200 {object} map[string]interface{}
 // @Router /logout [post]
 func Logout(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+	// Bumping the token version invalidates every access/refresh token issued
+	// before this logout.
+	config.DB.Model(&models.User{}).Where("id = ?", userID.(uint)).
+		UpdateColumn("token_version", gorm.Expr("token_version + 1"))
 	c.JSON(http.StatusOK, gin.H{"message": "Logged out successfully"})
 }
 

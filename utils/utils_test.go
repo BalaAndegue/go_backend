@@ -19,7 +19,7 @@ func TestHashAndCheckPassword(t *testing.T) {
 }
 
 func TestGenerateAndValidateToken(t *testing.T) {
-	token, err := GenerateToken(42, "ADMIN")
+	token, err := GenerateToken(42, "ADMIN", 3)
 	if err != nil {
 		t.Fatalf("GenerateToken returned error: %v", err)
 	}
@@ -33,6 +33,26 @@ func TestGenerateAndValidateToken(t *testing.T) {
 	}
 	if got := claims["role"].(string); got != "ADMIN" {
 		t.Errorf("role = %q, want ADMIN", got)
+	}
+	if got := int(claims["ver"].(float64)); got != 3 {
+		t.Errorf("ver = %d, want 3", got)
+	}
+	if got := claims["type"].(string); got != "access" {
+		t.Errorf("type = %q, want access", got)
+	}
+}
+
+func TestRefreshTokenClaims(t *testing.T) {
+	token, err := GenerateRefreshToken(7, 1)
+	if err != nil {
+		t.Fatalf("GenerateRefreshToken returned error: %v", err)
+	}
+	claims, err := ValidateToken(token)
+	if err != nil {
+		t.Fatalf("ValidateToken returned error: %v", err)
+	}
+	if got := claims["type"].(string); got != "refresh" {
+		t.Errorf("type = %q, want refresh", got)
 	}
 }
 

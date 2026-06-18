@@ -19,14 +19,28 @@ func getJWTKey() []byte {
 	return []byte(key)
 }
 
-func GenerateToken(userID uint, role string) (string, error) {
-	expirationTime := time.Now().Add(24 * time.Hour)
+// GenerateToken issues a short-lived access token bound to the user's current
+// token version, so bumping the version (logout / password change) revokes it.
+func GenerateToken(userID uint, role string, tokenVersion int) (string, error) {
 	claims := &jwt.MapClaims{
 		"user_id": userID,
 		"role":    role,
-		"exp":     expirationTime.Unix(),
+		"ver":     tokenVersion,
+		"type":    "access",
+		"exp":     time.Now().Add(24 * time.Hour).Unix(),
 	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(getJWTKey())
+}
 
+// GenerateRefreshToken issues a long-lived refresh token, also version-bound.
+func GenerateRefreshToken(userID uint, tokenVersion int) (string, error) {
+	claims := &jwt.MapClaims{
+		"user_id": userID,
+		"ver":     tokenVersion,
+		"type":    "refresh",
+		"exp":     time.Now().Add(7 * 24 * time.Hour).Unix(),
+	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(getJWTKey())
 }

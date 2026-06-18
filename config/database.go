@@ -79,6 +79,10 @@ func ConnectDatabase() {
 			&models.OrderItem{},
 			&models.Payment{},
 			&models.DeliveryGeolocation{},
+			&models.VerificationToken{},
+			&models.Review{},
+			&models.WishlistItem{},
+			&models.Coupon{},
 		)
 		if err != nil {
 			log.Fatal("Échec de la migration :", err)
