@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 	"shopcart-api/config"
 	"shopcart-api/models"
 	"shopcart-api/utils"
@@ -215,20 +216,31 @@ func generateUniqueSlug(name string) string {
 // @Success 200 {object} map[string]interface{}
 // @Router /products [get]
 func GetProducts(c *gin.Context) {
-	query := config.DB.Preload("Variants").Preload("Category").Where("is_visible = ?", true)
+	cat := c.Query("category")
+	search := c.Query("search")
+	applyFilters := func(db *gorm.DB) *gorm.DB {
+		db = db.Where("is_visible = ?", true)
+		if cat != "" {
+			db = db.Where("category_id = ?", cat)
+		}
+		if search != "" {
+			db = db.Where("name ILIKE ? OR description ILIKE ?", "%"+search+"%", "%"+search+"%")
+		}
+		return db
+	}
 
-	if cat := c.Query("category"); cat != "" {
-		query = query.Where("category_id = ?", cat)
-	}
-	if search := c.Query("search"); search != "" {
-		query = query.Where("name ILIKE ? OR description ILIKE ?", "%"+search+"%", "%"+search+"%")
-	}
+	page, perPage, offset := paginationParams(c)
+	var total int64
+	applyFilters(config.DB.Model(&models.Product{})).Count(&total)
 
 	var products []models.Product
-	query.Order("is_featured DESC, updated_at DESC").Find(&products)
+	applyFilters(config.DB.Preload("Variants").Preload("Category")).
+		Order("is_featured DESC, updated_at DESC").
+		Limit(perPage).Offset(offset).Find(&products)
+
 	c.JSON(http.StatusOK, gin.H{
 		"status": "success", "message": "Products retrieved successfully",
-		"code": 200, "data": products,
+		"code": 200, "data": products, "meta": paginationMeta(page, perPage, total),
 	})
 }
 

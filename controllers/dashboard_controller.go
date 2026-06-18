@@ -1,14 +1,21 @@
 package controllers
 
 import (
+	"math"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 	"shopcart-api/config"
 	"shopcart-api/models"
 )
+
+// amountsEqual compares two monetary amounts tolerating float rounding noise.
+func amountsEqual(a, b float64) bool {
+	return math.Abs(a-b) < 0.01
+}
 
 // ===== DASHBOARD CONTROLLER =====
 
@@ -158,13 +165,18 @@ func CreatePaymentIntent(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Order not found"})
 		return
 	}
+	if !canActOnOrder(c, &order) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Unauthorized"})
+		return
+	}
 
-	// Payment intent stub (real integration with Stripe would go here)
+	// The amount charged is always derived from the order, never from the
+	// client, so a caller cannot under-pay by sending a smaller amount.
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Payment intent created",
 		"data": gin.H{
 			"client_secret": "pi_stub_" + strconv.FormatUint(uint64(input.OrderID), 10),
-			"amount":        input.Amount,
+			"amount":        order.Total,
 			"currency":      "usd",
 		},
 	})
@@ -182,9 +194,40 @@ func StorePayment(c *gin.Context) {
 		return
 	}
 
+	var order models.Order
+	if err := config.DB.First(&order, input.OrderID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Order not found"})
+		return
+	}
+
+	// Ownership: only the order's customer (or management) may pay for it.
+	if !canActOnOrder(c, &order) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	// Amount must match the order total — never trust a client-supplied amount.
+	if !amountsEqual(input.Amount, order.Total) {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "Payment amount does not match order total"})
+		return
+	}
+
+	// Idempotency: refuse to pay an order that is already paid or further along.
+	if order.Status != models.StatusPending && order.Status != models.StatusPendingPayment {
+		c.JSON(http.StatusConflict, gin.H{"error": "Order is not awaiting payment"})
+		return
+	}
+	var existing int64
+	config.DB.Model(&models.Payment{}).
+		Where("order_id = ? AND status = ?", order.ID, "PAID").Count(&existing)
+	if existing > 0 {
+		c.JSON(http.StatusConflict, gin.H{"error": "Order already paid"})
+		return
+	}
+
 	payment := models.Payment{
-		OrderID: input.OrderID,
-		Amount:  input.Amount,
+		OrderID: order.ID,
+		Amount:  order.Total,
 		Method:  input.Method,
 		Status:  "PAID",
 	}
@@ -192,13 +235,18 @@ func StorePayment(c *gin.Context) {
 		payment.TransactionID = &input.TransactionID
 	}
 
-	if err := config.DB.Create(&payment).Error; err != nil {
+	err := config.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&payment).Error; err != nil {
+			return err
+		}
+		return tx.Model(&models.Order{}).Where("id = ?", order.ID).
+			Update("status", models.StatusPaid).Error
+	})
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not store payment"})
 		return
 	}
 
-	// Update order status to PAID
-	config.DB.Model(&models.Order{}).Where("id = ?", input.OrderID).Update("status", models.StatusPaid)
-
+	notifyOrderStatus(order.ID, models.StatusPaid)
 	c.JSON(http.StatusCreated, gin.H{"message": "Payment registered", "data": payment})
 }

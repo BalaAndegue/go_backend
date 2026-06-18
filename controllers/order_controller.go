@@ -42,13 +42,27 @@ func generateOrderNumber() string {
 
 func GetMyOrders(c *gin.Context) {
 	userID, _ := c.Get("user_id")
-	var orders []models.Order
-	query := config.DB.Preload("Items").Where("user_id = ?", userID.(uint)).Order("created_at DESC")
-	if status := c.Query("status"); status != "" {
-		query = query.Where("status = ?", status)
+	status := c.Query("status")
+	applyFilters := func(db *gorm.DB) *gorm.DB {
+		db = db.Where("user_id = ?", userID.(uint))
+		if status != "" {
+			db = db.Where("status = ?", status)
+		}
+		return db
 	}
-	query.Find(&orders)
-	c.JSON(http.StatusOK, gin.H{"message": "Orders retrieved", "data": orders})
+
+	page, perPage, offset := paginationParams(c)
+	var total int64
+	applyFilters(config.DB.Model(&models.Order{})).Count(&total)
+
+	var orders []models.Order
+	applyFilters(config.DB.Preload("Items")).Order("created_at DESC").
+		Limit(perPage).Offset(offset).Find(&orders)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Orders retrieved", "data": orders,
+		"meta": paginationMeta(page, perPage, total),
+	})
 }
 
 func GetOrders(c *gin.Context) {
@@ -126,6 +140,9 @@ func CreateOrder(c *gin.Context) {
 		notes = &input.Notes
 	}
 
+	subtotal := cart.Total
+	shipping, tax, total := computeOrderCharges(subtotal)
+
 	order := models.Order{
 		OrderNumber:     generateOrderNumber(),
 		Status:          initialStatus,
@@ -143,8 +160,10 @@ func CreateOrder(c *gin.Context) {
 		BillingCountry:  billingCountry,
 		PaymentMethod:   input.PaymentMethod,
 		Notes:           notes,
-		Subtotal:        cart.Total,
-		Total:           cart.Total,
+		Subtotal:        subtotal,
+		Shipping:        shipping,
+		Tax:             tax,
+		Total:           total,
 	}
 
 	tx := config.DB.Begin()
@@ -205,6 +224,51 @@ func CreateOrder(c *gin.Context) {
 	})
 }
 
+// CancelOrder lets a customer cancel their own order (or management cancel any)
+// while it is still cancellable, restocking variant inventory in a transaction.
+func CancelOrder(c *gin.Context) {
+	orderID := c.Param("order")
+	var order models.Order
+	if err := config.DB.Preload("Items").First(&order, orderID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"message": "Order not found"})
+		return
+	}
+
+	if !canActOnOrder(c, &order) {
+		c.JSON(http.StatusForbidden, gin.H{"message": "Unauthorized"})
+		return
+	}
+
+	switch order.Status {
+	case models.StatusPending, models.StatusPendingPayment, models.StatusPaid, models.StatusProcessing:
+		// still cancellable
+	default:
+		c.JSON(http.StatusConflict, gin.H{"message": "Order can no longer be cancelled"})
+		return
+	}
+
+	err := config.DB.Transaction(func(tx *gorm.DB) error {
+		for _, item := range order.Items {
+			if item.ProductVariantID != nil {
+				if err := tx.Model(&models.ProductVariant{}).
+					Where("id = ?", *item.ProductVariantID).
+					UpdateColumn("stock", gorm.Expr("stock + ?", item.Quantity)).Error; err != nil {
+					return err
+				}
+			}
+		}
+		return tx.Model(&order).Update("status", models.StatusCancelled).Error
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "Could not cancel order"})
+		return
+	}
+
+	notifyOrderStatus(order.ID, models.StatusCancelled)
+	config.DB.Preload("Items").First(&order, order.ID)
+	c.JSON(http.StatusOK, gin.H{"message": "Order cancelled successfully", "data": order})
+}
+
 type UpdateOrderStatusInput struct {
 	Status string `json:"status" binding:"required"`
 }
@@ -228,5 +292,6 @@ func UpdateOrderStatus(c *gin.Context) {
 	}
 
 	config.DB.Model(&order).Update("status", input.Status)
+	notifyOrderStatus(order.ID, input.Status)
 	c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("Order status updated to %s", input.Status), "data": order})
 }

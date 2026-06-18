@@ -63,6 +63,7 @@ func AssignDelivery(c *gin.Context) {
 		"status":           models.StatusAssigned,
 	})
 	config.DB.Preload("DeliveryUser").First(&order, order.ID)
+	notifyDeliveryAssigned(deliveryUser.ID, order.ID, order.OrderNumber)
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": fmt.Sprintf("Order %d assigned to delivery user %s successfully", order.ID, deliveryUser.Name),
@@ -133,6 +134,7 @@ func UpdateDeliveryStatus(c *gin.Context) {
 	}
 
 	config.DB.Model(&order).Update("status", body.Status)
+	notifyOrderStatus(order.ID, body.Status)
 	c.JSON(http.StatusOK, gin.H{
 		"message": fmt.Sprintf("Delivery status updated to %s for order %d", body.Status, order.ID),
 		"data":    order, "status": "success", "code": 200,

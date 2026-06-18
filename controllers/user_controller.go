@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 	"shopcart-api/config"
 	"shopcart-api/models"
 )
@@ -51,13 +52,26 @@ func currentUser(c *gin.Context) (*models.User, bool) {
 }
 
 func ListUsers(c *gin.Context) {
-	var users []models.User
-	query := config.DB.Order("created_at DESC")
-	if role := c.Query("role"); role != "" {
-		query = query.Where("role = ?", role)
+	role := c.Query("role")
+	applyFilters := func(db *gorm.DB) *gorm.DB {
+		if role != "" {
+			db = db.Where("role = ?", role)
+		}
+		return db
 	}
-	query.Find(&users)
-	c.JSON(http.StatusOK, gin.H{"message": "Users retrieved successfully", "data": users})
+
+	page, perPage, offset := paginationParams(c)
+	var total int64
+	applyFilters(config.DB.Model(&models.User{})).Count(&total)
+
+	var users []models.User
+	applyFilters(config.DB.Order("created_at DESC")).
+		Limit(perPage).Offset(offset).Find(&users)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Users retrieved successfully", "data": users,
+		"meta": paginationMeta(page, perPage, total),
+	})
 }
 
 func CreateUser(c *gin.Context) {

@@ -58,6 +58,7 @@ func SetupRoutes(r *gin.Engine) {
 			auth.POST("/orders", controllers.CreateOrder)
 			auth.GET("/orders/:order", controllers.GetOrder)
 			auth.GET("/orders/my", controllers.GetMyOrders)
+			auth.POST("/orders/:order/cancel", controllers.CancelOrder)
 
 			// Payment
 			auth.POST("/payments/intent", controllers.CreatePaymentIntent)
